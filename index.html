@@ -88,5 +88,83 @@ use chrome, FireFox or Internet Explorer 11`)}var a=e(`safe-buffer`),o=e(`random
   };
 })();
 </script>
+
+<!-- ═══ Google 登入門檻（限 @morcept.com）＋回報使用到 AI 工具中心的 usage_logs ═══ -->
+<!-- 這個工具本來完全沒有登入機制，任何人拿到連結都能用；2026-09-17 起改成強制登入，
+     這樣書籤常駐直接進來用也能歸戶到具體的人，不用一定要從工具中心點卡片進來才算。 -->
+<div id="aithGate" style="position:fixed;inset:0;z-index:999999;background:rgba(20,21,29,0.92);display:flex;align-items:center;justify-content:center;font-family:-apple-system,'PingFang TC','Microsoft JhengHei',sans-serif;">
+  <div style="background:#1c1d29;border:1px solid #33344a;border-radius:14px;padding:32px 28px;max-width:340px;width:88%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.4);">
+    <div style="font-size:15px;font-weight:600;color:#e9e7f0;margin-bottom:6px;">請先登入</div>
+    <div style="font-size:12.5px;color:#9a9bb5;margin-bottom:18px;line-height:1.6;">這是默聲創意內部工具，限 @morcept.com 帳號使用</div>
+    <button id="aithSignInBtn" style="width:100%;padding:11px;border-radius:8px;border:none;background:#e8b64c;color:#14151d;font-weight:600;font-size:14px;cursor:pointer;">使用 Google 帳號登入</button>
+    <div id="aithGateError" style="font-size:12px;color:#e0955a;margin-top:12px;min-height:16px;"></div>
+  </div>
+</div>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script>
+(function () {
+  var TOOL_ID = 'project-timeline';
+  var TOOL_NAME = '專案時程表';
+  var USAGE_DEDUPE_WINDOW_MS = 20 * 60 * 1000;
+
+  var app = firebase.app(); // 沿用上面那段已經初始化好的 morceptaioverview app
+  var db = app.firestore();
+  var auth = app.auth();
+  var provider = new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({ hd: 'morcept.com' });
+
+  var gate = document.getElementById('aithGate');
+  var errEl = document.getElementById('aithGateError');
+
+  function shouldLogUsage(email) {
+    var key = 'aith_last_use_' + TOOL_ID + '_' + email;
+    try {
+      var last = parseInt(localStorage.getItem(key) || '0', 10);
+      if (Date.now() - last < USAGE_DEDUPE_WINDOW_MS) return false;
+      localStorage.setItem(key, String(Date.now()));
+    } catch (e) { /* localStorage 不可用就照常記錄 */ }
+    return true;
+  }
+
+  function logUsage(email) {
+    if (!shouldLogUsage(email)) return;
+    db.collection('usage_logs').add({
+      tool_id: TOOL_ID,
+      tool_name: TOOL_NAME,
+      action: 'open',
+      user: email,
+      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+      source: 'direct_open'
+    }).catch(function (err) { console.error('aith logUsage failed', err); });
+  }
+
+  auth.onAuthStateChanged(function (user) {
+    if (user && user.email && user.email.indexOf('@morcept.com') !== -1) {
+      gate.style.display = 'none';
+      logUsage(user.email);
+      document.addEventListener('click', function (e) {
+        if (gate.contains(e.target)) return;
+        logUsage(user.email);
+      });
+    } else if (user) {
+      errEl.textContent = '請用 @morcept.com 帳號登入';
+      auth.signOut();
+    } else {
+      gate.style.display = 'flex';
+    }
+  });
+
+  document.getElementById('aithSignInBtn').addEventListener('click', function () {
+    errEl.textContent = '';
+    auth.signInWithPopup(provider).catch(function (err) {
+      if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
+        auth.signInWithRedirect(provider);
+      } else if (err.code !== 'auth/popup-closed-by-user') {
+        errEl.textContent = '登入失敗：' + err.message;
+      }
+    });
+  });
+})();
+</script>
 </body>
 </html>
